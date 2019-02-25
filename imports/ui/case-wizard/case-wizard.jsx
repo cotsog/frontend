@@ -76,6 +76,23 @@ class CaseWizard extends Component {
     }
   }
 
+  renderRadioButtons = () => {
+    const { unitItem, userBzLogin, userId, inProgress } = this.props
+    if (unitItem.ownerIds && unitItem.ownerIds.includes(userId)) {
+      return unitItem.components
+        .map(({ id, name, default_assigned_to: assignedTo }) => ( // TODO: enhance later
+          <RadioButton
+            key={id} value={name} label={name + (assignedTo === userBzLogin ? ' (you)' : '')} disabled={inProgress}
+          />
+        ))
+    } else {
+      const { id, name, default_assigned_to: assignedTo } = unitItem.components.find(({ default_assigned_to: assignedTo }) => assignedTo === userBzLogin)
+      return <RadioButton
+        key={id} value={name} label={name + (assignedTo === userBzLogin ? ' (you)' : '')} disabled={inProgress}
+      />
+    }
+  }
+
   handleRoleChanged = (evt, val) => {
     const { inputValues } = this.state
     const { default_assigned_to: assignedTo } = this.props.unitItem.components.find(({ name }) => name === val)
@@ -122,7 +139,7 @@ class CaseWizard extends Component {
   }
 
   render () {
-    const { isLoading, fieldValues, unitItem, userBzLogin, dispatch, error, inProgress, reportItem } = this.props
+    const { isLoading, fieldValues, unitItem, dispatch, error, inProgress, reportItem } = this.props
     if (isLoading) {
       return <Preloader />
     }
@@ -237,14 +254,7 @@ class CaseWizard extends Component {
               onChange={this.handleRoleChanged}
               valueSelected={assignedUnitRole}
             >
-              {
-                unitItem.components
-                  .map(({ id, name, default_assigned_to: assignedTo }) => ( // TODO: enhance later
-                    <RadioButton
-                      key={id} value={name} label={name + (assignedTo === userBzLogin ? ' (you)' : '')} disabled={inProgress}
-                    />
-                  ))
-              }
+              {this.renderRadioButtons()}
             </RadioButtonGroup>
             {needsNewUser && (
               <div className='mt3'>
@@ -302,7 +312,8 @@ CaseWizard.propTypes = {
   userBzLogin: PropTypes.string,
   fieldValues: PropTypes.object,
   preferredUnitId: PropTypes.string,
-  reportItem: PropTypes.object
+  reportItem: PropTypes.object,
+  userId: PropTypes.string
 }
 
 export default withRouter(connect(
@@ -335,6 +346,7 @@ export default withRouter(connect(
         ? Object.assign(Units.findOne({ id: unitIdInt }), UnitMetaData.findOne({ bzId: unitIdInt }))
         : null,
       userBzLogin: bzLoginHandle.ready() ? Meteor.user().bugzillaCreds.login : null,
+      userId: bzLoginHandle.ready() ? Meteor.userId() : null,
       reportItem: Reports.findOne({ id: reportIdInt }),
       fieldValues: enumFields.reduce((all, name) => {
         all[name] = CaseFieldValues.findOne({ name })
