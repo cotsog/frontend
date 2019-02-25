@@ -237,7 +237,13 @@ const CaseContainer = createContainer(props => {
         return role ? Object.assign(matchingUser, { role: role.role }) : matchingUser
       }
       all[userType] = Array.isArray(caseUserTypes[userType])
-        ? caseUserTypes[userType].map(mapUser)
+        ? caseUserTypes[userType].reduce((all, user) => {
+          const mappedUser = mapUser(user)
+          if (mappedUser.role) {
+            all.push(mappedUser)
+          }
+          return all
+        }, [])
         : mapUser(caseUserTypes[userType])
       return all
     }, {}),

@@ -198,12 +198,9 @@ if (Meteor.isServer) {
   }
   const associationFactory = makeAssociationFactory(collectionName)
 
-  Meteor.publish(`${collectionName}.byId`, associationFactory(
-    publicationObj.publishById({
-      uriTemplate: idUrlTemplate
-    }),
-    withUsers(caseItem => _.flatten(Object.values(getCaseUsers(caseItem))).map(u => u.login))
-  ))
+  Meteor.publish(`${collectionName}.byId`, publicationObj.publishById({
+    uriTemplate: idUrlTemplate
+  }))
 
   const noReportsExp = {
     field: 'keywords',
