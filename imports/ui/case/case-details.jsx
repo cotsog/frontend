@@ -370,7 +370,8 @@ class CaseDetails extends Component {
       addUsersError = caseUsersState.error
     }
     const isUnitOwner = unitItem.metaData().ownerIds && unitItem.metaData().ownerIds.includes(userId)
-    const unitRoleType = normalizedUnitUsers.find(u => u.login === userBzLogin).role
+    const role = normalizedUnitUsers.find(u => u.login === userBzLogin)
+    const unitRoleType = role ? role.role : null
     return (
       <div className='flex-grow overflow-auto h-100'>
         {this.renderTitle(caseItem)}
