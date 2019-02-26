@@ -46,15 +46,36 @@ const makeInvitationMatcher = unitItem => ({
   }
 })
 
-const unitAssocHelper = (coll, collName, idFieldName) => fields => withDocs({
-  cursorMaker: (publishedItem, userId) =>
-    coll.find({
-      [idFieldName]: publishedItem.id
-    }, {
-      fields: typeof fields === 'function' ? fields(userId, publishedItem) : fields // If 'fields' is a function, call it with userId
-    }),
-  collectionName: collName
-})
+const unitAssocHelper = (coll, collName, idFieldName) => (fields, selectionSpecifier = {}) => {
+  return withDocs({
+    cursorMaker: (publishedItem, userId) => {
+      // if (collName === 'unitRolesData') {
+      //   console.log('query', {
+      //     [idFieldName]: publishedItem.id,
+      //     ...(typeof selectionSpecifier === 'function' ? selectionSpecifier(userId, publishedItem) : selectionSpecifier)
+      //   }, {
+      //     fields: typeof fields === 'function' ? fields(userId, publishedItem) : fields // If 'fields' is a function, call it with userId
+      //   })
+      //   console.log('then')
+      //
+      //   console.log('result', coll.find({
+      //     [idFieldName]: publishedItem.id,
+      //     ...(typeof selectionSpecifier === 'function' ? selectionSpecifier(userId, publishedItem) : selectionSpecifier)
+      //   }, {
+      //     fields: typeof fields === 'function' ? fields(userId, publishedItem) : fields // If 'fields' is a function, call it with userId
+      //   }).fetch())
+      //
+      // }
+      return coll.find({
+        [idFieldName]: publishedItem.id,
+        ...(typeof selectionSpecifier === 'function' ? selectionSpecifier(userId, publishedItem) : selectionSpecifier)
+      }, {
+        fields: typeof fields === 'function' ? fields(userId, publishedItem) : fields // If 'fields' is a function, call it with userId
+      })
+    },
+    collectionName: collName
+  })
+}
 
 const withMetaData = unitAssocHelper(UnitMetaData, unitMetaCollName, 'bzId')
 const withRolesData = unitAssocHelper(UnitRolesData, unitRolesCollName, 'unitBzId')
@@ -251,10 +272,56 @@ const rolesProjByOwnership = (userId, unitItem) => {
       unitBzId: 1,
       roleType: 1,
       defaultAssigneeId: 1,
+      // members: 1
       members: {
         $elemMatch: {
           isVisible: true
         }
+      }
+    }
+  }
+}
+
+const rolesSelectionByOwnership = (userId, unitItem) => {
+  const unitMeta = UnitMetaData.findOne({
+    bzId: unitItem.id
+  })
+  if (unitMeta.ownerIds.includes(userId)) {
+    return {}
+  } else {
+    const meUser = Meteor.users.findOne({ _id: userId })
+
+    // TODO: figure out a less lame way to do this
+    const ownerInvitor = (function getOwnerInvitor (user) {
+      const inv = PendingInvitations.findOne({
+        unitId: unitItem.id,
+        invitee: user.bugzillaCreds.id,
+        done: true
+      })
+
+      if (!inv || inv.invitedBy === user.bugzillaCreds.id) return null
+
+      const invitor = Meteor.users.findOne({
+        'bugzillaCreds.id': inv.invitedBy
+      })
+      console.log('invitor', invitor.emails[0].address)
+
+      if (unitMeta.ownerIds.includes(invitor._id)) {
+        return invitor
+      } else {
+        return getOwnerInvitor(invitor)
+      }
+    })(meUser)
+
+    if (ownerInvitor) {
+      return {
+        'members.id': {
+          $in: [userId, ownerInvitor._id]
+        }
+      }
+    } else { // Won't happen if all the roles data is setup correctly, but likely to happen in testing envs now and then
+      return {
+        'members.id': userId
       }
     }
   }
@@ -332,7 +399,7 @@ if (Meteor.isServer) {
           },
           disabled: 1
         }))),
-        withRolesData(rolesProjByOwnership)
+        withRolesData(rolesProjByOwnership, rolesSelectionByOwnership)
       ],
       funcName,
       uriBuilder
@@ -367,7 +434,7 @@ if (Meteor.isServer) {
       displayName: 1,
       unitType: 1
     }),
-    withRolesData(rolesProjByOwnership)
+    withRolesData(rolesProjByOwnership, rolesSelectionByOwnership)
   ]
   const rolesFieldsParams = {
     include_fields: 'name,id,components' // 'components' is only added as a fallback in case the roles are missing
