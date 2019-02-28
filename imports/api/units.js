@@ -69,16 +69,11 @@ export const getUnitRoles = (unit, userId) => {
 
   const unitMeta = UnitMetaData.findOne({ bzId: unit.id })
 
-  let memberReducer
-  if (unitMeta.ownerIds.includes(userId)) {
-    memberReducer = (mems, mem) => mems.concat([mem.id])
-  } else {
-    memberReducer = (mems, mem) => mem.isVisible ? mems.concat([mem.id]) : mems
-  }
+  const memberVisCheck = memberDesc => unitMeta.ownerIds.includes(userId) || memberDesc.isVisible || memberDesc.id === userId
 
   // Prefetching all user docs to optimize query performance (single query vs one for each user)
   const userIds = roleDocs.reduce((all, roleObj) => all.concat(
-    roleObj.members.reduce(memberReducer, [])
+    roleObj.members.reduce((mems, mem) => memberVisCheck(mem) ? mems.concat([mem.id]) : mems, [])
   ), [])
 
   const userDocs = Meteor.users.find({ _id: { $in: userIds } }).fetch()
@@ -86,7 +81,7 @@ export const getUnitRoles = (unit, userId) => {
   // Constructing the user role objects array similar to the way it is done from BZ's product components below
   const roleUsers = roleDocs.reduce((all, roleObj) => {
     roleObj.members.forEach(memberDesc => {
-      if (memberDesc.isVisible) {
+      if (memberVisCheck(memberDesc)) {
         // Using the prefetched array to find the user doc
         const user = userDocs.find(doc => doc._id === memberDesc.id)
         all.push({
