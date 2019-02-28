@@ -217,7 +217,7 @@ const CaseContainer = createContainer(props => {
   const bzLoginHandle = Meteor.subscribe('users.myBzLogin')
 
   const caseUserTypes = currCase ? getCaseUsers(currCase) : null
-  const unitRoles = currUnit && getUnitRoles(currUnit)
+  const unitRoles = currUnit && getUnitRoles(currUnit, Meteor.userId())
   const user = bzLoginHandle.ready() ? Meteor.user() : null
   return {
     loadingCase: !caseHandle.ready(),

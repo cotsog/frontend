@@ -49,23 +49,6 @@ const makeInvitationMatcher = unitItem => ({
 const unitAssocHelper = (coll, collName, idFieldName) => (fields, selectionSpecifier = {}) => {
   return withDocs({
     cursorMaker: (publishedItem, userId) => {
-      // if (collName === 'unitRolesData') {
-      //   console.log('query', {
-      //     [idFieldName]: publishedItem.id,
-      //     ...(typeof selectionSpecifier === 'function' ? selectionSpecifier(userId, publishedItem) : selectionSpecifier)
-      //   }, {
-      //     fields: typeof fields === 'function' ? fields(userId, publishedItem) : fields // If 'fields' is a function, call it with userId
-      //   })
-      //   console.log('then')
-      //
-      //   console.log('result', coll.find({
-      //     [idFieldName]: publishedItem.id,
-      //     ...(typeof selectionSpecifier === 'function' ? selectionSpecifier(userId, publishedItem) : selectionSpecifier)
-      //   }, {
-      //     fields: typeof fields === 'function' ? fields(userId, publishedItem) : fields // If 'fields' is a function, call it with userId
-      //   }).fetch())
-      //
-      // }
       return coll.find({
         [idFieldName]: publishedItem.id,
         ...(typeof selectionSpecifier === 'function' ? selectionSpecifier(userId, publishedItem) : selectionSpecifier)
@@ -80,31 +63,42 @@ const unitAssocHelper = (coll, collName, idFieldName) => (fields, selectionSpeci
 const withMetaData = unitAssocHelper(UnitMetaData, unitMetaCollName, 'bzId')
 const withRolesData = unitAssocHelper(UnitRolesData, unitRolesCollName, 'unitBzId')
 
-export const getUnitRoles = unit => {
+export const getUnitRoles = (unit, userId) => {
   // Resolving roles via the newer mongo collection
   const roleDocs = UnitRolesData.find({ unitBzId: unit.id }).fetch()
 
-  roleDocs.forEach(doc => {
-    doc.members = doc.members || [] // Patching it to protect against empty member arrays because of the selective projection
-  })
+  const unitMeta = UnitMetaData.findOne({ bzId: unit.id })
+
+  let memberReducer
+  if (unitMeta.ownerIds.includes(userId)) {
+    memberReducer = (mems, mem) => mems.concat([mem.id])
+  } else {
+    memberReducer = (mems, mem) => mem.isVisible ? mems.concat([mem.id]) : mems
+  }
+
   // Prefetching all user docs to optimize query performance (single query vs one for each user)
-  const userIds = roleDocs.reduce((all, roleObj) => all.concat(roleObj.members.map(mem => mem.id)), [])
+  const userIds = roleDocs.reduce((all, roleObj) => all.concat(
+    roleObj.members.reduce(memberReducer, [])
+  ), [])
+
   const userDocs = Meteor.users.find({ _id: { $in: userIds } }).fetch()
 
   // Constructing the user role objects array similar to the way it is done from BZ's product components below
   const roleUsers = roleDocs.reduce((all, roleObj) => {
     roleObj.members.forEach(memberDesc => {
-      // Using the prefetched array to find the user doc
-      const user = userDocs.find(doc => doc._id === memberDesc.id)
-      all.push({
-        userId: user._id,
-        login: user.bugzillaCreds.login,
-        email: user.emails[0].address,
-        name: user.profile.name,
-        role: roleObj.roleType,
-        isOccupant: memberDesc.isOccupant,
-        avatarUrl: user.profile.avatarUrl
-      })
+      if (memberDesc.isVisible) {
+        // Using the prefetched array to find the user doc
+        const user = userDocs.find(doc => doc._id === memberDesc.id)
+        all.push({
+          userId: user._id,
+          login: user.bugzillaCreds.login,
+          email: user.emails[0].address,
+          name: user.profile.name,
+          role: roleObj.roleType,
+          isOccupant: memberDesc.isOccupant,
+          avatarUrl: user.profile.avatarUrl
+        })
+      }
     })
     return all
   }, [])
@@ -257,29 +251,29 @@ export const addUserToRole = (invitingUser, inviteeUser, unitBzId, role, invType
 }
 
 const rolesProjByOwnership = (userId, unitItem) => {
-  const unitMeta = UnitMetaData.findOne({
-    bzId: unitItem.id
-  })
-  if (unitMeta.ownerIds.includes(userId)) {
-    return {
-      unitBzId: 1,
-      roleType: 1,
-      members: 1,
-      defaultAssigneeId: 1
-    }
-  } else {
-    return {
-      unitBzId: 1,
-      roleType: 1,
-      defaultAssigneeId: 1,
-      // members: 1
-      members: {
-        $elemMatch: {
-          isVisible: true
-        }
-      }
-    }
+  // const unitMeta = UnitMetaData.findOne({
+  //   bzId: unitItem.id
+  // })
+  // if (unitMeta.ownerIds.includes(userId)) {
+  return {
+    unitBzId: 1,
+    roleType: 1,
+    members: 1,
+    defaultAssigneeId: 1
   }
+  // } else {
+  //   return {
+  //     unitBzId: 1,
+  //     roleType: 1,
+  //     defaultAssigneeId: 1,
+  //     // members: 1
+  //     members: {
+  //       $elemMatch: {
+  //         isVisible: true
+  //       }
+  //     }
+  //   }
+  // }
 }
 
 const rolesSelectionByOwnership = (userId, unitItem) => {
@@ -351,23 +345,19 @@ if (Meteor.isServer) {
           const idObj = JSON.parse(identityStr)
           const { bugzillaCreds: { login } } = Meteor.users.findOne({ _id: idObj.user })
           return unitItem => {
-            const roles = getUnitRoles(unitItem)
+            const roles = getUnitRoles(unitItem, idObj.user)
             return roles.some(role => role.login === login)
           }
         }
       }),
-      withMetaData(userId => ({
+      withMetaData({
         bzId: 1,
         displayName: 1,
         moreInfo: 1,
         unitType: 1,
-        ownerIds: {
-          $elemMatch: {
-            $in: [userId]
-          }
-        },
+        ownerIds: 1,
         disabled: 1
-      }))
+      })
     ))
   const makeUnitPublisherWithAssocs = ({ funcName, uriBuilder, assocFuncs }) => {
     Meteor.publish(`${collectionName}.${funcName}`, associationFactory(
@@ -382,23 +372,19 @@ if (Meteor.isServer) {
     makeUnitPublisherWithAssocs({
       assocFuncs: [
         withUsers(
-          unitItem => getUnitRoles(unitItem).map(u => u.login),
+          (unitItem, userId) => getUnitRoles(unitItem, userId).map(u => u.login),
           // Should rely both on completed invitations and unit information (which is why the "$or" is there)
           (query, unitItem) => ({ $or: [makeInvitationMatcher(unitItem), query] }),
           (projection, unitItem) => Object.assign(makeInvitationMatcher(unitItem), projection)
         ),
-        withMetaData(metaDataFields || (userId => ({
+        withMetaData(metaDataFields || {
           bzId: 1,
           displayName: 1,
           moreInfo: 1,
           unitType: 1,
-          ownerIds: {
-            $elemMatch: {
-              $in: [userId]
-            }
-          },
+          ownerIds: 1,
           disabled: 1
-        }))),
+        }),
         withRolesData(rolesProjByOwnership, rolesSelectionByOwnership)
       ],
       funcName,
@@ -432,7 +418,8 @@ if (Meteor.isServer) {
     withMetaData({
       bzId: 1,
       displayName: 1,
-      unitType: 1
+      unitType: 1,
+      ownerIds: 1
     }),
     withRolesData(rolesProjByOwnership, rolesSelectionByOwnership)
   ]
